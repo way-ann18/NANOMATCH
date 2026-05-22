@@ -6,8 +6,8 @@
 
 class MemoryPool {
 private:
-    std::vector<Order> pool;        // The giant pre-allocated contiguous block of memory
-    std::vector<int32_t> free_list; // Stack of available indices
+    std::vector<Order> pool;       
+    std::vector<int32_t> free_list;
 
 public:
     MemoryPool(size_t capacity = 1000000) {
@@ -34,7 +34,6 @@ public:
         free_list.push_back(index);
     }
 
-    // Get a reference to the order at a specific index
     Order& get(int32_t index) {
         return pool[index];
     }

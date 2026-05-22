@@ -2,10 +2,6 @@
 #include <iostream>
 #include <algorithm>
 
-// =======================================================================
-// 1. LINKED LIST POINTER MATH (O(1) Time)
-// =======================================================================
-
 void OrderBook::add_to_list(PriceLevel& level, int32_t order_idx) {
     Order& order = pool.get(order_idx);
     order.next_index = -1;
@@ -41,24 +37,17 @@ void OrderBook::remove_from_list(PriceLevel& level, int32_t order_idx) {
     order.prev_index = -1;
 }
 
-// =======================================================================
-// 2. PUBLIC API
-// =======================================================================
-// Finds the next highest bid skipping 64 levels at a time
 void OrderBook::update_best_bid_downwards() {
     uint32_t block_idx = best_bid / 64;
     
-    // Mask out bits at and above the current best_bid
     uint64_t mask = (1ULL << (best_bid % 64)) - 1; 
     uint64_t masked_block = bid_bitboard[block_idx] & mask;
 
-    // Is there another active order in the exact same 64-tick block?
     if (masked_block != 0) {
         best_bid = (block_idx * 64) + (63 - __builtin_clzll(masked_block));
         return;
     }
 
-    // Otherwise, hardware-scan downward through blocks 64-ticks at a time
     while (block_idx > 0) {
         block_idx--;
         if (bid_bitboard[block_idx] != 0) {
@@ -66,24 +55,20 @@ void OrderBook::update_best_bid_downwards() {
             return;
         }
     }
-    best_bid = 0; // Book is completely empty
+    best_bid = 0;
 }
 
-// Finds the next lowest ask skipping 64 levels at a time
 void OrderBook::update_best_ask_upwards() {
     uint32_t block_idx = best_ask / 64;
     
-    // Shift out the bits at and below the current best_ask
     uint32_t shift_amount = (best_ask % 64) + 1;
     uint64_t masked_block = (shift_amount == 64) ? 0 : (ask_bitboard[block_idx] >> shift_amount);
 
-    // Is there another active order in the exact same 64-tick block?
     if (masked_block != 0) {
         best_ask += 1 + __builtin_ctzll(masked_block);
         return;
     }
 
-    // Otherwise, hardware-scan upward through blocks 64-ticks at a time
     uint32_t max_blocks = ask_bitboard.size();
     while (++block_idx < max_blocks) {
         if (ask_bitboard[block_idx] != 0) {
@@ -91,7 +76,7 @@ void OrderBook::update_best_ask_upwards() {
             return;
         }
     }
-    best_ask = MAX_PRICE; // Book is completely empty
+    best_ask = MAX_PRICE; 
 }
 
 void OrderBook::add_order(const Order& incoming_order) {
@@ -120,24 +105,20 @@ void OrderBook::cancel_order(uint64_t order_id) {
 
     if (order.side == Side::BUY) {
         remove_from_list(bids[order.price], idx);
-        // If best bid level empties, walk down to find the next best bid
-        // If the level empties out, update the hardware bitmask
+    
         if (bids[order.price].head_order_index == -1) {
             clear_bid_active(order.price); 
             
-            // If it was the best bid, hardware-scan downward
             if (order.price == best_bid) {
                 update_best_bid_downwards();
             }
         }
     } else {
         remove_from_list(asks[order.price], idx);
-        // If best ask level empties, walk up to find the next best ask
-        // If the level empties out, update the hardware bitmask
+        
         if (asks[order.price].head_order_index == -1) {
             clear_ask_active(order.price);
             
-            // If it was the best ask, hardware-scan upward
             if (order.price == best_ask) {
                 update_best_ask_upwards();
             }
@@ -148,15 +129,11 @@ void OrderBook::cancel_order(uint64_t order_id) {
     pool.deallocate(idx);
 }
 
-// =======================================================================
-// 3. EXECUTION ENGINES
-// =======================================================================
-
 void OrderBook::execute_limit_buy(int32_t incoming_idx) {
     Order& buy_order = pool.get(incoming_idx);
 
     while (buy_order.quantity > 0 && best_ask <= MAX_PRICE) {
-        if (buy_order.price < best_ask) break; // Spread not crossed
+        if (buy_order.price < best_ask) break;
 
         PriceLevel& ask_level = asks[best_ask];
         int32_t current_ask_idx = ask_level.head_order_index;
@@ -184,8 +161,8 @@ void OrderBook::execute_limit_buy(int32_t incoming_idx) {
 
         // Walk the book up if level is emptied
         if (ask_level.head_order_index == -1) {
-            clear_ask_active(best_ask);   // 1. Flip the bit for this empty price to 0
-            update_best_ask_upwards();    // 2. Hardware-scan instantly to the next lowest ask
+            clear_ask_active(best_ask);   
+            update_best_ask_upwards();    
         }
     }
 
@@ -193,9 +170,7 @@ void OrderBook::execute_limit_buy(int32_t incoming_idx) {
         add_to_list(bids[buy_order.price], incoming_idx);
         order_map[buy_order.order_id] = incoming_idx;
         
-        // You can delete 'if (buy_order.price > best_bid) best_bid = buy_order.price;' 
-        // because set_bid_active already handles updating the best_bid for you!
-        set_bid_active(buy_order.price); // <--- ADD THIS LINE
+        set_bid_active(buy_order.price); 
     } else {
         pool.deallocate(incoming_idx);
     }
@@ -205,7 +180,7 @@ void OrderBook::execute_limit_sell(int32_t incoming_idx) {
     Order& sell_order = pool.get(incoming_idx);
 
     while (sell_order.quantity > 0 && best_bid > 0) {
-        if (sell_order.price > best_bid) break; // Spread not crossed
+        if (sell_order.price > best_bid) break; 
 
         PriceLevel& bid_level = bids[best_bid];
         int32_t current_bid_idx = bid_level.head_order_index;
@@ -232,10 +207,9 @@ void OrderBook::execute_limit_sell(int32_t incoming_idx) {
             current_bid_idx = next_idx;
         }
 
-        // Walk the book down if level is emptied
         if (bid_level.head_order_index == -1) {
-            clear_bid_active(best_bid);     // 1. Flip the bit for this empty bid to 0
-            update_best_bid_downwards();    // 2. Hardware-scan instantly to the next highest bid
+            clear_bid_active(best_bid);     
+            update_best_bid_downwards();    
         }
     }
 
@@ -243,8 +217,6 @@ void OrderBook::execute_limit_sell(int32_t incoming_idx) {
         add_to_list(asks[sell_order.price], incoming_idx);
         order_map[sell_order.order_id] = incoming_idx;
         
-        // THE HARDWARE BITMASK: It is resting on the ask book.
-        // set_ask_active handles updating the best_ask variable for you.
         set_ask_active(sell_order.price); 
     } else {
         pool.deallocate(incoming_idx);
@@ -277,7 +249,6 @@ void OrderBook::execute_market_buy(int32_t incoming_idx) {
             current_ask_idx = next_idx;
         }
 
-        // Walk the book up using O(1) Hardware Bit-Scan
         if (ask_level.head_order_index == -1) {
             clear_ask_active(best_ask);    // 1. Flip the bit for this empty ask to 0
             update_best_ask_upwards();     // 2. Hardware-scan instantly to the next lowest ask
@@ -314,10 +285,9 @@ void OrderBook::execute_market_sell(int32_t incoming_idx) {
             current_bid_idx = next_idx;
         }
 
-        // Walk the book down using O(1) Hardware Bit-Scan
         if (bid_level.head_order_index == -1) {
-            clear_bid_active(best_bid);     // 1. Flip the bit for this empty bid to 0
-            update_best_bid_downwards();    // 2. Hardware-scan instantly to the next highest bid
+            clear_bid_active(best_bid);     
+            update_best_bid_downwards();    
         }
     }
 
@@ -325,15 +295,10 @@ void OrderBook::execute_market_sell(int32_t incoming_idx) {
     pool.deallocate(incoming_idx);
 }
 
-// =======================================================================
-// 4. DISPLAY UTILITIES
-// =======================================================================
-
 void OrderBook::print_book() {
     std::cout << "\n=== ULTRA-LOW-LATENCY LADDER ===\n";
     std::cout << "--- ASKS (Sellers) ---\n";
     
-    // Print top 5 asks to avoid flooding terminal
     int printed = 0;
     for (uint32_t p = best_ask; p < MAX_PRICE && printed < 5; ++p) {
         if (asks[p].head_order_index != -1) {
@@ -345,7 +310,6 @@ void OrderBook::print_book() {
     std::cout << "-----------------------\n";
     std::cout << "--- BIDS (Buyers)  ---\n";
     
-    // Print top 5 bids
     printed = 0;
     for (uint32_t p = best_bid; p > 0 && printed < 5; --p) {
         if (bids[p].head_order_index != -1) {

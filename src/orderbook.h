@@ -55,7 +55,6 @@ class OrderBook {
             ask_bitboard[price / 64] &= ~(1ULL << (price % 64));
         }
 
-        // Hardware Intrinsic Search Functions (Replaces the while loops)
         void update_best_bid_downwards();
         void update_best_ask_upwards();
 
@@ -66,9 +65,8 @@ class OrderBook {
             
             bids.resize(max_prices);
             asks.resize(max_prices);
-            order_map.assign(max_orders, -1); // Initialize all ID lookups to -1 (Null)
+            order_map.assign(max_orders, -1); 
             
-            // ADD THIS: Size is (1,000,000 / 64) + 1 = 15,626 blocks
             bid_bitboard.assign((max_prices / 64) + 1, 0);
             ask_bitboard.assign((max_prices / 64) + 1, 0);
             

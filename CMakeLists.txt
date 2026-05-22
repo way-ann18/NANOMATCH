@@ -16,11 +16,9 @@ add_executable(NANOMATCH
 )
 
 target_include_directories(NANOMATCH PRIVATE src)
-# Tell CMake to link the system thread library (required for our logger)
 find_package(Threads REQUIRED)
 target_link_libraries(NANOMATCH PRIVATE Threads::Threads)
 
-# --- 2. FETCH GOOGLE BENCHMARK ---
 include(FetchContent)
 FetchContent_Declare(
   benchmark
@@ -28,19 +26,20 @@ FetchContent_Declare(
   GIT_TAG v1.8.3
 )
 
-# Tell Google Benchmark NOT to download GoogleTest
 set(BENCHMARK_ENABLE_TESTING OFF CACHE BOOL "Disable benchmark testing" FORCE)
 
 FetchContent_MakeAvailable(benchmark)
 
-# --- 3. BASELINE LIBRARY ---
-# Compile the baseline as a library, explicitly skipping its main.cpp
+# --- 1. Baseline Library ---
 add_library(baseline_lib STATIC src_baseline/orderbook.cpp)
 target_include_directories(baseline_lib PUBLIC src_baseline)
 
-# --- 4. THE BENCHMARK EXECUTABLE ---
-# We create a completely separate binary just for statistical testing
+# --- 2. NEW: Map & Queue Based Library ---
+add_library(map_lib STATIC src_mapBased/orderbook.cpp)
+target_include_directories(map_lib PUBLIC src_mapBased)
+
 add_executable(nanomatch_bench src/benchmark.cpp src/orderbook.cpp src/logger.cpp)
 target_include_directories(nanomatch_bench PRIVATE src)
 
-target_link_libraries(nanomatch_bench PRIVATE baseline_lib benchmark::benchmark Threads::Threads)
+# --- 3. Link all 3 libraries to the benchmark executable ---
+target_link_libraries(nanomatch_bench PRIVATE baseline_lib map_lib benchmark::benchmark Threads::Threads)
