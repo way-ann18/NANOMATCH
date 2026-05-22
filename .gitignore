@@ -1,0 +1,26 @@
+# Build artifacts
+build/
+*.o
+*.out
+*.exe
+
+# Profiling and Trace files
+perf.data
+perf.data.old
+out.perf
+out.folded
+*.svg
+
+# Heavy/External directories
+WSL2-Linux-Kernel/
+
+# Python cache
+__pycache__/
+*.pyc
+
+# IDE/OS files
+.vscode/
+.DS_Store
+data/
+perf_*
+FlameGraph/
