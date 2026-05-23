@@ -10,6 +10,7 @@ perf.data.old
 out.perf
 out.folded
 *.svg
+out.perf-folded
 
 # Heavy/External directories
 WSL2-Linux-Kernel/
