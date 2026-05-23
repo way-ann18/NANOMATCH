@@ -24,8 +24,15 @@ namespace map_queue {
                 best_bid_level.total_volume -= matched_qty;
                 best_ask_level.total_volume -= matched_qty;
 
-                if (current_bid.quantity == 0) best_bid_level.orders.pop();
-                if (current_ask.quantity == 0) best_ask_level.orders.pop();
+                // CHANGED: Use pop_front() for std::list and clean up the lookup map
+                if (current_bid.quantity == 0) {
+                    order_lookup.erase(current_bid.order_id); // Clean up map
+                    best_bid_level.orders.pop_front();
+                }
+                if (current_ask.quantity == 0) {
+                    order_lookup.erase(current_ask.order_id); // Clean up map
+                    best_ask_level.orders.pop_front();
+                }
 
                 if (best_bid_level.orders.empty()) bids.erase(best_bid_it);
                 if (best_ask_level.orders.empty()) asks.erase(best_ask_it);
@@ -36,45 +43,50 @@ namespace map_queue {
     }
 
     void MapOrderBook::add_order(const Order& order) {
+        PriceLevel* level_ptr = nullptr;
+        std::list<Order>::iterator order_it;
+
+        // CHANGED: Capture the pointer to the level and the iterator to the order
         if (order.is_buy) {
             bids[order.price].price = order.price; 
-            bids[order.price].add_order(order);
+            level_ptr = &bids[order.price];
+            order_it = level_ptr->add_order(order);
         } else {
             asks[order.price].price = order.price;
-            asks[order.price].add_order(order);
+            level_ptr = &asks[order.price];
+            order_it = level_ptr->add_order(order);
         }
+
+        // NEW: Store it in the hash map for O(1) lookups later
+        order_lookup[order.order_id] = {level_ptr, order_it};
+
         match();
     }
 
+    // ENTIRELY REWRITTEN: Now executes in true O(1) time
     void MapOrderBook::cancel_order(uint64_t order_id) {
-        auto cancel_in_map = [&](auto& book_map) {
-            for (auto& [price, level] : book_map) {
-                bool found = false;
-                size_t size = level.orders.size();
-                std::queue<Order> temp_queue;
+        // 1. O(1) Hash Map Lookup
+        auto it = order_lookup.find(order_id);
+        if (it == order_lookup.end()) return; // Order not found, exit instantly
 
-                for (size_t i = 0; i < size; ++i) {
-                    Order order = level.orders.front();
-                    level.orders.pop();
-                    if (order.order_id == order_id) {
-                        level.total_volume -= order.quantity;
-                        found = true;
-                    } else {
-                        temp_queue.push(order);
-                    }
-                }
-                level.orders = std::move(temp_queue);
-                if (found) {
-                    if (level.orders.empty()) book_map.erase(price);
-                    return true;
-                }
-            }
-            return false;
-        };
+        PriceLevel* level = it->second.first;
+        auto list_iterator = it->second.second;
 
-        if (!cancel_in_map(bids)) {
-            cancel_in_map(asks);
+        bool is_buy = list_iterator->is_buy;
+        uint64_t price = level->price;
+
+        // 2. O(1) Math & List Deletion
+        level->total_volume -= list_iterator->quantity;
+        level->orders.erase(list_iterator); 
+        
+        // 3. Clean up the Price Level if it's completely empty
+        if (level->orders.empty()) {
+            if (is_buy) bids.erase(price);
+            else asks.erase(price);
         }
+
+        // 4. Erase from the lookup table
+        order_lookup.erase(it);
     }
 
     void MapOrderBook::print_top_of_book() const {
