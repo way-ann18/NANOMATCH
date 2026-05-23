@@ -30,12 +30,11 @@ namespace map_queue {
         // Maps order_id -> { Pointer to its PriceLevel, Iterator to the Order in the list }
         std::unordered_map<uint64_t, std::pair<PriceLevel*, std::list<Order>::iterator>> order_lookup;
 
-        void match();
 
     public:
         MapOrderBook() = default;
 
-        void add_order(const Order& order);
+        void add_order(const Order order);
         void cancel_order(uint64_t order_id);
         void print_top_of_book() const;
     };

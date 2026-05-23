@@ -4,63 +4,113 @@
 
 namespace map_queue {
 
-    void MapOrderBook::match() {
-        while (!bids.empty() && !asks.empty()) {
-            auto best_bid_it = bids.begin();
-            auto best_ask_it = asks.begin();
+    // void MapOrderBook::match() {
+    //     while (!bids.empty() && !asks.empty()) {
+    //         auto best_bid_it = bids.begin();
+    //         auto best_ask_it = asks.begin();
 
-            if (best_bid_it->first >= best_ask_it->first) {
-                PriceLevel& best_bid_level = best_bid_it->second;
+    //         if (best_bid_it->first >= best_ask_it->first) {
+    //             PriceLevel& best_bid_level = best_bid_it->second;
+    //             PriceLevel& best_ask_level = best_ask_it->second;
+
+    //             Order& current_bid = best_bid_level.orders.front();
+    //             Order& current_ask = best_ask_level.orders.front();
+
+    //             uint64_t matched_qty = std::min(current_bid.quantity, current_ask.quantity);
+                
+    //             current_bid.quantity -= matched_qty;
+    //             current_ask.quantity -= matched_qty;
+
+    //             best_bid_level.total_volume -= matched_qty;
+    //             best_ask_level.total_volume -= matched_qty;
+
+    //             // CHANGED: Use pop_front() for std::list and clean up the lookup map
+    //             if (current_bid.quantity == 0) {
+    //                 order_lookup.erase(current_bid.order_id); // Clean up map
+    //                 best_bid_level.orders.pop_front();
+    //             }
+    //             if (current_ask.quantity == 0) {
+    //                 order_lookup.erase(current_ask.order_id); // Clean up map
+    //                 best_ask_level.orders.pop_front();
+    //             }
+
+    //             if (best_bid_level.orders.empty()) bids.erase(best_bid_it);
+    //             if (best_ask_level.orders.empty()) asks.erase(best_ask_it);
+    //         } else {
+    //             break;
+    //         }
+    //     }
+    // }
+
+    void MapOrderBook::add_order(Order order) {
+    // 1. ATTEMPT MATCH FIRST (Aggressive logic)
+    // Only attempt matching if we have liquidity on the opposite side
+        if (order.is_buy) {
+            // Aggressive BUY: check if there are ASKS to match against
+            while (!asks.empty() && order.quantity > 0 && order.price >= asks.begin()->first) {
+                auto best_ask_it = asks.begin();
                 PriceLevel& best_ask_level = best_ask_it->second;
 
-                Order& current_bid = best_bid_level.orders.front();
                 Order& current_ask = best_ask_level.orders.front();
 
-                uint64_t matched_qty = std::min(current_bid.quantity, current_ask.quantity);
+                uint64_t matched_qty = std::min(order.quantity, current_ask.quantity);
                 
-                current_bid.quantity -= matched_qty;
+                order.quantity -= matched_qty;
                 current_ask.quantity -= matched_qty;
-
-                best_bid_level.total_volume -= matched_qty;
                 best_ask_level.total_volume -= matched_qty;
 
-                // CHANGED: Use pop_front() for std::list and clean up the lookup map
-                if (current_bid.quantity == 0) {
-                    order_lookup.erase(current_bid.order_id); // Clean up map
-                    best_bid_level.orders.pop_front();
-                }
                 if (current_ask.quantity == 0) {
-                    order_lookup.erase(current_ask.order_id); // Clean up map
+                    order_lookup.erase(current_ask.order_id);
                     best_ask_level.orders.pop_front();
                 }
 
-                if (best_bid_level.orders.empty()) bids.erase(best_bid_it);
-                if (best_ask_level.orders.empty()) asks.erase(best_ask_it);
-            } else {
-                break;
+                if (best_ask_level.orders.empty()) {
+                    asks.erase(best_ask_it);
+                }
+            }
+        } else {
+            // Aggressive SELL: check if there are BIDS to match against
+            while (!bids.empty() && order.quantity > 0 && order.price <= bids.begin()->first) {
+                auto best_bid_it = bids.begin();
+                PriceLevel& best_bid_level = best_bid_it->second;
+
+                Order& current_bid = best_bid_level.orders.front();
+
+                uint64_t matched_qty = std::min(order.quantity, current_bid.quantity);
+                
+                order.quantity -= matched_qty;
+                current_bid.quantity -= matched_qty;
+                best_bid_level.total_volume -= matched_qty;
+
+                if (current_bid.quantity == 0) {
+                    order_lookup.erase(current_bid.order_id);
+                    best_bid_level.orders.pop_front();
+                }
+
+                if (best_bid_level.orders.empty()) {
+                    bids.erase(best_bid_it);
+                }
             }
         }
-    }
 
-    void MapOrderBook::add_order(const Order& order) {
-        PriceLevel* level_ptr = nullptr;
-        std::list<Order>::iterator order_it;
+        // 2. ONLY INSERT REMAINING QUANTITY
+        // If the order was not fully filled, it rests in the book
+        if (order.quantity > 0) {
+            PriceLevel* level_ptr = nullptr;
+            std::list<Order>::iterator order_it;
 
-        // CHANGED: Capture the pointer to the level and the iterator to the order
-        if (order.is_buy) {
-            bids[order.price].price = order.price; 
-            level_ptr = &bids[order.price];
-            order_it = level_ptr->add_order(order);
-        } else {
-            asks[order.price].price = order.price;
-            level_ptr = &asks[order.price];
-            order_it = level_ptr->add_order(order);
+            if (order.is_buy) {
+                bids[order.price].price = order.price; 
+                level_ptr = &bids[order.price];
+                order_it = level_ptr->add_order(order);
+            } else {
+                asks[order.price].price = order.price;
+                level_ptr = &asks[order.price];
+                order_it = level_ptr->add_order(order);
+            }
+
+            order_lookup[order.order_id] = {level_ptr, order_it};
         }
-
-        // NEW: Store it in the hash map for O(1) lookups later
-        order_lookup[order.order_id] = {level_ptr, order_it};
-
-        match();
     }
 
     // ENTIRELY REWRITTEN: Now executes in true O(1) time
