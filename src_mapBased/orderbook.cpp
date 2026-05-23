@@ -4,49 +4,8 @@
 
 namespace map_queue {
 
-    // void MapOrderBook::match() {
-    //     while (!bids.empty() && !asks.empty()) {
-    //         auto best_bid_it = bids.begin();
-    //         auto best_ask_it = asks.begin();
-
-    //         if (best_bid_it->first >= best_ask_it->first) {
-    //             PriceLevel& best_bid_level = best_bid_it->second;
-    //             PriceLevel& best_ask_level = best_ask_it->second;
-
-    //             Order& current_bid = best_bid_level.orders.front();
-    //             Order& current_ask = best_ask_level.orders.front();
-
-    //             uint64_t matched_qty = std::min(current_bid.quantity, current_ask.quantity);
-                
-    //             current_bid.quantity -= matched_qty;
-    //             current_ask.quantity -= matched_qty;
-
-    //             best_bid_level.total_volume -= matched_qty;
-    //             best_ask_level.total_volume -= matched_qty;
-
-    //             // CHANGED: Use pop_front() for std::list and clean up the lookup map
-    //             if (current_bid.quantity == 0) {
-    //                 order_lookup.erase(current_bid.order_id); // Clean up map
-    //                 best_bid_level.orders.pop_front();
-    //             }
-    //             if (current_ask.quantity == 0) {
-    //                 order_lookup.erase(current_ask.order_id); // Clean up map
-    //                 best_ask_level.orders.pop_front();
-    //             }
-
-    //             if (best_bid_level.orders.empty()) bids.erase(best_bid_it);
-    //             if (best_ask_level.orders.empty()) asks.erase(best_ask_it);
-    //         } else {
-    //             break;
-    //         }
-    //     }
-    // }
-
     void MapOrderBook::add_order(Order order) {
-    // 1. ATTEMPT MATCH FIRST (Aggressive logic)
-    // Only attempt matching if we have liquidity on the opposite side
         if (order.is_buy) {
-            // Aggressive BUY: check if there are ASKS to match against
             while (!asks.empty() && order.quantity > 0 && order.price >= asks.begin()->first) {
                 auto best_ask_it = asks.begin();
                 PriceLevel& best_ask_level = best_ask_it->second;
@@ -69,7 +28,6 @@ namespace map_queue {
                 }
             }
         } else {
-            // Aggressive SELL: check if there are BIDS to match against
             while (!bids.empty() && order.quantity > 0 && order.price <= bids.begin()->first) {
                 auto best_bid_it = bids.begin();
                 PriceLevel& best_bid_level = best_bid_it->second;
@@ -93,8 +51,6 @@ namespace map_queue {
             }
         }
 
-        // 2. ONLY INSERT REMAINING QUANTITY
-        // If the order was not fully filled, it rests in the book
         if (order.quantity > 0) {
             PriceLevel* level_ptr = nullptr;
             std::list<Order>::iterator order_it;
@@ -113,11 +69,10 @@ namespace map_queue {
         }
     }
 
-    // ENTIRELY REWRITTEN: Now executes in true O(1) time
     void MapOrderBook::cancel_order(uint64_t order_id) {
         // 1. O(1) Hash Map Lookup
         auto it = order_lookup.find(order_id);
-        if (it == order_lookup.end()) return; // Order not found, exit instantly
+        if (it == order_lookup.end()) return; 
 
         PriceLevel* level = it->second.first;
         auto list_iterator = it->second.second;
@@ -125,17 +80,14 @@ namespace map_queue {
         bool is_buy = list_iterator->is_buy;
         uint64_t price = level->price;
 
-        // 2. O(1) Math & List Deletion
         level->total_volume -= list_iterator->quantity;
         level->orders.erase(list_iterator); 
         
-        // 3. Clean up the Price Level if it's completely empty
         if (level->orders.empty()) {
             if (is_buy) bids.erase(price);
             else asks.erase(price);
         }
 
-        // 4. Erase from the lookup table
         order_lookup.erase(it);
     }
 

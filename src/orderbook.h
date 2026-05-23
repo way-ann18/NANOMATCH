@@ -6,7 +6,6 @@
 #include <iostream>
 #include <cstdint>
 
-// --- THE PRICE LADDER RUNG ---
 struct PriceLevel {
     int32_t head_order_index = -1;  
     int32_t tail_order_index = -1;  

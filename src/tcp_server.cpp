@@ -10,18 +10,15 @@
 TCPServer::TCPServer(int listen_port, SPSCRingBuffer<Order, 131072>& order_buffer) 
     : port(listen_port), buffer(order_buffer) {
     
-    // 1. Create the socket file descriptor
     server_fd = socket(AF_INET, SOCK_STREAM, 0);
     if (server_fd == 0) {
         std::cerr << "[ERROR] Socket creation failed.\n";
         exit(EXIT_FAILURE);
     }
 
-    // Allow immediate reuse of the port after restart
     int opt = 1;
     setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
 
-    // 2. Bind the socket to the port
     struct sockaddr_in address;
     address.sin_family = AF_INET;
     address.sin_addr.s_addr = INADDR_ANY;
@@ -38,7 +35,6 @@ TCPServer::~TCPServer() {
 }
 
 void TCPServer::start_listening() {
-    // 3. Start listening for incoming connections
     if (listen(server_fd, 3) < 0) {
         std::cerr << "[ERROR] Listen failed.\n";
         return;
@@ -51,14 +47,12 @@ void TCPServer::start_listening() {
         struct sockaddr_in client_address;
         socklen_t addrlen = sizeof(client_address);
         
-        // Block and wait until a trader connects
         int client_socket = accept(server_fd, (struct sockaddr *)&client_address, &addrlen);
         if (client_socket < 0) {
             std::cerr << "[ERROR] Accept failed.\n";
             continue;
         }
 
-        // CRITICAL: Disable Nagle's algorithm for low-latency transmission
         int opt = 1;
         setsockopt(client_socket, IPPROTO_TCP, TCP_NODELAY, &opt, sizeof(opt));
 
@@ -67,7 +61,6 @@ void TCPServer::start_listening() {
         BinaryOrderPacket packet;
         int orders_received = 0;
 
-        // Keep reading 18-byte chunks until the client disconnects
         while (recv(client_socket, &packet, sizeof(BinaryOrderPacket), MSG_WAITALL) == sizeof(BinaryOrderPacket)) {
             Order order;
             order.order_id = packet.order_id;
@@ -76,11 +69,9 @@ void TCPServer::start_listening() {
             order.side = static_cast<Side>(packet.side);
             order.type = static_cast<OrderType>(packet.type);
             
-            // Get current timestamp in nanoseconds since epoch
             order.timestamp = std::chrono::duration_cast<std::chrono::nanoseconds>(
                 std::chrono::system_clock::now().time_since_epoch()).count();
 
-            // Fire into the matching engine
             while (!buffer.push(order)) {
                 __builtin_ia32_pause(); // Spin if buffer full
             }

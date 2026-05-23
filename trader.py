@@ -10,7 +10,6 @@ PACKET_FORMAT = '<QIIBB'
 
 def main():
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    # Enable TCP_NODELAY and increase buffer
     s.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
     s.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 1024 * 1024)
     
@@ -27,7 +26,7 @@ def main():
         if len(buffer) >= batch_size * PACKET_SIZE:
             s.sendall(buffer)
             buffer.clear()
-            time.sleep(0.001) # Pacing is crucial for WSL virtual switch
+            time.sleep(0.001)
 
     if buffer: s.sendall(buffer)
     s.close()

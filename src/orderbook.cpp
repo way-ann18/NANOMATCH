@@ -142,7 +142,7 @@ void OrderBook::execute_limit_buy(int32_t incoming_idx) {
             Order& resting_ask = pool.get(current_ask_idx);
             uint32_t trade_qty = std::min(buy_order.quantity, resting_ask.quantity);
 
-            // logger.log_trade(buy_order.order_id, resting_ask.order_id, best_ask, trade_qty);
+            logger.log_trade(buy_order.order_id, resting_ask.order_id, best_ask, trade_qty);
 
             
             buy_order.quantity -= trade_qty;
@@ -159,7 +159,6 @@ void OrderBook::execute_limit_buy(int32_t incoming_idx) {
             current_ask_idx = next_idx;
         }
 
-        // Walk the book up if level is emptied
         if (ask_level.head_order_index == -1) {
             clear_ask_active(best_ask);   
             update_best_ask_upwards();    
@@ -191,7 +190,7 @@ void OrderBook::execute_limit_sell(int32_t incoming_idx) {
             Order& resting_bid = pool.get(current_bid_idx);
             uint32_t trade_qty = std::min(sell_order.quantity, resting_bid.quantity);
 
-            // logger.log_trade(resting_bid.order_id, sell_order.order_id, best_bid, trade_qty);
+            logger.log_trade(resting_bid.order_id, sell_order.order_id, best_bid, trade_qty);
 
             sell_order.quantity -= trade_qty;
             resting_bid.quantity -= trade_qty;
@@ -233,7 +232,7 @@ void OrderBook::execute_market_buy(int32_t incoming_idx) {
         while (current_ask_idx != -1 && buy_order.quantity > 0) {
             Order& resting_ask = pool.get(current_ask_idx);
             uint32_t trade_qty = std::min(buy_order.quantity, resting_ask.quantity);
-            // logger.log_trade(buy_order.order_id, resting_ask.order_id, best_ask, trade_qty);
+            logger.log_trade(buy_order.order_id, resting_ask.order_id, best_ask, trade_qty);
 
             buy_order.quantity -= trade_qty;
             resting_ask.quantity -= trade_qty;
@@ -250,8 +249,8 @@ void OrderBook::execute_market_buy(int32_t incoming_idx) {
         }
 
         if (ask_level.head_order_index == -1) {
-            clear_ask_active(best_ask);    // 1. Flip the bit for this empty ask to 0
-            update_best_ask_upwards();     // 2. Hardware-scan instantly to the next lowest ask
+            clear_ask_active(best_ask);    
+            update_best_ask_upwards();     
         }
     }
 
@@ -269,7 +268,7 @@ void OrderBook::execute_market_sell(int32_t incoming_idx) {
         while (current_bid_idx != -1 && sell_order.quantity > 0) {
             Order& resting_bid = pool.get(current_bid_idx);
             uint32_t trade_qty = std::min(sell_order.quantity, resting_bid.quantity);
-            // logger.log_trade(resting_bid.order_id, sell_order.order_id, best_bid, trade_qty);
+            logger.log_trade(resting_bid.order_id, sell_order.order_id, best_bid, trade_qty);
             
             sell_order.quantity -= trade_qty;
             resting_bid.quantity -= trade_qty;

@@ -2,18 +2,14 @@
 #include <random>
 #include <vector>
 #include <algorithm>
-
-// Project Headers
 #include "memory_pool.h"
-#include "orderbook.h"               // O(1) Engine
-#include "../src_baseline/orderbook.h" // Baseline Engine
-#include "../src_mapBased/orderbook.h" // Map Engine
+#include "orderbook.h"              
+#include "../src_baseline/orderbook.h" 
+#include "../src_mapBased/orderbook.h" 
 
-// --- UNIFIED BENCHMARK CONSTANTS ---
 const int MARKET_DEPTH = 10000;
 const int PREALLOC_SIZE = 100000;
 
-// Helper for custom percentiles
 double calc_percentile(const std::vector<double>& v, double p) {
     if (v.empty()) return 0.0;
     std::vector<double> copy = v;
@@ -22,9 +18,7 @@ double calc_percentile(const std::vector<double>& v, double p) {
     return copy[idx];
 }
 
-// ==========================================
-// 1. OPTIMIZED O(1) ENGINE FIXTURE
-// ==========================================
+
 class OrderBookFixture : public benchmark::Fixture {
 public:
     MemoryPool* pool; Logger* logger; OrderBook* book;
@@ -33,10 +27,9 @@ public:
     void SetUp(const ::benchmark::State& state) {
         pool = new MemoryPool();
         logger = new Logger("/dev/null");
-        book = new OrderBook(*pool, *logger); // Defaults to max 2,000,000
+        book = new OrderBook(*pool, *logger); 
         resting_ids.resize(MARKET_DEPTH);
         
-        // Pre-fill to steady state (IDs 1 to 10,000)
         for(int i = 0; i < MARKET_DEPTH; ++i) {
             Order o; 
             o.order_id = i + 1; 
@@ -45,7 +38,7 @@ public:
             o.price = 10000 + (i % 500); 
             o.quantity = 10;
             book->add_order(o);
-            resting_ids[i] = o.order_id; // Store in resting array
+            resting_ids[i] = o.order_id; 
         }
     }
     void TearDown(const ::benchmark::State& state) { delete book; delete logger; delete pool; }
@@ -54,13 +47,12 @@ public:
 BENCHMARK_F(OrderBookFixture, OptimizedLatency)(benchmark::State& state) {
     std::mt19937 rng(1337);
     
-    // Pre-calculate random inputs to keep the timed loop pure
     std::vector<uint64_t> new_ids(PREALLOC_SIZE);
     std::vector<uint32_t> cancel_indices(PREALLOC_SIZE);
     std::vector<uint32_t> random_prices(PREALLOC_SIZE);
     
     for(int i = 0; i < PREALLOC_SIZE; ++i) {
-        new_ids[i] = 100000 + i; // Safe unique IDs: 100,000 to 199,999
+        new_ids[i] = 100000 + i; 
         cancel_indices[i] = rng() % MARKET_DEPTH; 
         random_prices[i] = 10000 + (rng() % 1000); 
     }
@@ -76,26 +68,21 @@ BENCHMARK_F(OrderBookFixture, OptimizedLatency)(benchmark::State& state) {
         order.price = random_prices[mod_i];
         order.quantity = 10;
         
-        // 1. TIMED: Add the order
         book->add_order(order);
         
-        // 2. PAUSED: Benchmark Management Overhead
         state.PauseTiming(); 
         size_t idx_to_cancel = cancel_indices[mod_i];
         uint64_t id_to_cancel = resting_ids[idx_to_cancel];
-        resting_ids[idx_to_cancel] = order.order_id; // Swap ID in array
+        resting_ids[idx_to_cancel] = order.order_id; 
         state.ResumeTiming();
         
-        // 3. TIMED: Cancel the old resting order
         book->cancel_order(id_to_cancel); 
         
         i++;
     }
 }
 
-// ==========================================
-// 2. BASELINE FIXTURE
-// ==========================================
+
 class BaselineFixture : public benchmark::Fixture {
 public:
     baseline::OrderBook* baseline_book;
@@ -156,9 +143,6 @@ BENCHMARK_F(BaselineFixture, BaselineLatency)(benchmark::State& state) {
     }
 }
 
-// ==========================================
-// 3. MAP-BASED FIXTURE
-// ==========================================
 class MapBasedFixture : public benchmark::Fixture {
 public:
     map_queue::MapOrderBook* map_book;
@@ -217,11 +201,6 @@ BENCHMARK_F(MapBasedFixture, MapLatency)(benchmark::State& state) {
     }
 }
 
-
-
-// ==========================================
-// REGISTRATION
-// ==========================================
 #define REGISTER_BENCHMARK(fixture, name) \
 BENCHMARK_REGISTER_F(fixture, name) \
     ->Unit(benchmark::kNanosecond) ->Repetitions(100) ->DisplayAggregatesOnly(true) \
