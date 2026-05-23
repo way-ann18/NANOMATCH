@@ -156,15 +156,24 @@ The production-grade engine. Replaces all dynamic, pointer-based containers with
 
 ## Benchmark Results
 
-Note: Logger was disabled in the optimized engine during benchmarking to ensure a fair comparison of the matching engine core against its counterparts.
+The logger was disabled in the optimized engine to ensure a fair comparison of the matching core only.
 
-All timings are in nanoseconds (ns). Each benchmark runs 100 repetitions against a pre-filled book of 10,000 resting orders. Each iteration measures one `add_order` and one `cancel_order` call.
-
-| Implementation | Mean (ns) | Median (ns) | Std Dev (ns) | CV | p50 (ns) | p90 (ns) | p99 (ns) |
-|---|---|---|---|---|---|---|---|
-| Baseline (vector + sort) | | | | | | | |
-| Map-Based (std::map + list) | | | | | | | |
-| Optimized (flat array + bitboard) | | | | | | | |
+All timings are in nanoseconds (ns). Each benchmark runs 100 repetitions against a pre-filled book of 10,000 resting orders. Each iteration measures one `add_order` and one `cancel_order` call. The logger was disabled in the optimized engine to ensure a fair comparison of the matching core only.
+ 
+**Time** is wall-clock time. **CPU** is the time the processor was actually executing benchmark code, excluding OS scheduling preemptions. For latency analysis, CPU time is the more meaningful number.
+ 
+| Implementation | Mean Time (ns) | Mean CPU (ns) | Median Time (ns) | Median CPU (ns) | Std Dev (ns) | CV | p50 (ns) | p90 (ns) | p99 (ns) |
+|---|---|---|---|---|---|---|---|---|---|
+| Baseline (vector + sort) | 374,200 | 374,700 | 339,300 | 339,700 | 65,500 | 17.51% | 339,200 | 481,100 | 546,400 |
+| Map-Based (std::map + list) | 1,246 | 1,261 | 1,245 | 1,261 | 144 | 11.55% | 1,243 | 1,431 | 1,595 |
+| Optimized (flat array + bitboard) | 511 | 516 | 502 | 506 | 41 | 7.92% | 502 | 559 | 643 |
+ 
+**Key takeaways:**
+ 
+- The optimized engine is **~2.4x faster** than the map-based implementation at median latency (502 ns vs 1,245 ns).
+- The optimized engine is **~676x faster** than the baseline at median latency (502 ns vs 339,276 ns).
+- The optimized engine has the lowest CV (7.92%), meaning it is the most consistent and deterministic -- a critical property for HFT systems where tail latency is as important as average latency.
+- The baseline's high CV (17.51%) reflects the unpredictable cost of `std::sort` and linear scans as the book depth varies across iterations.
 
 ---
 
@@ -215,12 +224,6 @@ cmake --build build --parallel
 
 ```bash
 ./build/nanomatch_bench
-```
-
-The benchmark will run 100 repetitions for each of the three implementations and output the following aggregated statistics for each:
-
-```
-<name>_mean | <name>_median | <name>_stddev | <name>_cv | <name>_p50 | <name>_p90 | <name>_p99
 ```
 
 ### Step 4 -- Run the Optimized Engine (CSV Mode)
