@@ -9,15 +9,10 @@ int main() {
     std::cout << "=========================================\n";
     std::cout << "  SCENARIO 1: BUILDING INITIAL LIQUIDITY \n";
     std::cout << "=========================================\n";
-    // Adding bids (Buyers)
-    ob.add_order({1, true, 98, 100});   // Bid 100 shares @ $98
-    ob.add_order({2, true, 99, 200});   // Bid 200 shares @ $99
-    
-    // Adding asks (Sellers)
-    ob.add_order({3, false, 102, 100}); // Ask 100 shares @ $102
-    ob.add_order({4, false, 101, 150}); // Ask 150 shares @ $101
-
-    // Expected Spread: 99 (Bid) to 101 (Ask)
+    ob.add_order({1, true, 98, 100});   
+    ob.add_order({2, true, 99, 200});   
+    ob.add_order({3, false, 102, 100}); 
+    ob.add_order({4, false, 101, 150}); 
     ob.print_top_of_book();
 
 

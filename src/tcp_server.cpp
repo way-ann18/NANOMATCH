@@ -2,12 +2,13 @@
 #include <iostream>
 #include <sys/socket.h>
 #include <netinet/in.h>
+#include <netinet/tcp.h> 
 #include <unistd.h>
 #include <cstring>
 #include <chrono>
 
-TCPServer::TCPServer(int listen_port, OrderBook& order_book) 
-    : port(listen_port), book(order_book) {
+TCPServer::TCPServer(int listen_port, SPSCRingBuffer<Order, 131072>& order_buffer) 
+    : port(listen_port), buffer(order_buffer) {
     
     // 1. Create the socket file descriptor
     server_fd = socket(AF_INET, SOCK_STREAM, 0);
@@ -15,6 +16,10 @@ TCPServer::TCPServer(int listen_port, OrderBook& order_book)
         std::cerr << "[ERROR] Socket creation failed.\n";
         exit(EXIT_FAILURE);
     }
+
+    // Allow immediate reuse of the port after restart
+    int opt = 1;
+    setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
 
     // 2. Bind the socket to the port
     struct sockaddr_in address;
@@ -53,13 +58,17 @@ void TCPServer::start_listening() {
             continue;
         }
 
+        // CRITICAL: Disable Nagle's algorithm for low-latency transmission
+        int opt = 1;
+        setsockopt(client_socket, IPPROTO_TCP, TCP_NODELAY, &opt, sizeof(opt));
+
         std::cout << "\n[NETWORK] Trader connected! Receiving data stream...\n";
 
         BinaryOrderPacket packet;
         int orders_received = 0;
 
         // Keep reading 18-byte chunks until the client disconnects
-        while (read(client_socket, &packet, sizeof(BinaryOrderPacket)) == sizeof(BinaryOrderPacket)) {
+        while (recv(client_socket, &packet, sizeof(BinaryOrderPacket), MSG_WAITALL) == sizeof(BinaryOrderPacket)) {
             Order order;
             order.order_id = packet.order_id;
             order.price = packet.price;
@@ -72,13 +81,13 @@ void TCPServer::start_listening() {
                 std::chrono::system_clock::now().time_since_epoch()).count();
 
             // Fire into the matching engine
-            book.add_order(order);
+            while (!buffer.push(order)) {
+                __builtin_ia32_pause(); // Spin if buffer full
+            }
             orders_received++;
         }
 
-        std::cout << "[NETWORK] Trader disconnected. Processed " << orders_received << " live orders.\n";
-        book.print_book();
-        
+        std::cout << "[NETWORK] Trader disconnected. Processed " << orders_received << " live orders.\n";        
         close(client_socket);
     }
 }

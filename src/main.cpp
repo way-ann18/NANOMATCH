@@ -2,9 +2,20 @@
 #include "orderbook.h"
 #include "csv_reader.h"
 #include "tcp_server.h"
+#include "ring_buffer.h"
 #include <iostream>
 #include <chrono>
 #include <string>
+
+void matching_engine_worker(SPSCRingBuffer<Order, 131072>& buffer, OrderBook& book, std::atomic<bool>& running) {
+    Order order;
+    while (running) {
+        if (buffer.pop(order)) {
+            book.add_order(order);
+        }
+        __builtin_ia32_pause(); 
+    }
+}
 
 int main(int argc, char* argv[]) {
     std::cout << "========================================\n";
@@ -17,22 +28,17 @@ int main(int argc, char* argv[]) {
     bool run_live = (argc > 1 && std::string(argv[1]) == "live");
 
     if (run_live) {
-        
-        TCPServer server(8080, book);
+        SPSCRingBuffer<Order, 131072> buffer;
+        std::atomic<bool> running{true};
+        std::thread engine_thread(matching_engine_worker, std::ref(buffer), std::ref(book), std::ref(running));
+        TCPServer server(8080, buffer);
         server.start_listening(); 
+        running = false;
+        engine_thread.join();
         
     } else {
-        auto start = std::chrono::high_resolution_clock::now();
 
         CSVReader::load_orders("data/orders.csv", book);
-
-        auto end = std::chrono::high_resolution_clock::now();
-        auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start);
-
-        std::cout << "\n========================================\n";
-        std::cout << "[BENCHMARK] Total Execution Time: " << duration.count() << " microseconds.\n";
-        std::cout << "========================================\n";
-
         book.print_book();
     }
 

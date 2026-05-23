@@ -3,42 +3,35 @@ import struct
 import random
 import time
 
-HOST = '127.0.0.1'  
-PORT = 8080         
+HOST = '127.0.0.1'
+PORT = 8080
+PACKET_SIZE = 18 
+PACKET_FORMAT = '<QIIBB'
+
 def main():
-    print(f"[BOT] Booting up High-Frequency Trading Bot...")
-    print(f"[BOT] Attempting to connect to Nanomatch Exchange at {HOST}:{PORT}")
-    
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    try:
-        s.connect((HOST, PORT))
-        print("[BOT] Connection established! Sending order flow...\n")
-    except ConnectionRefusedError:
-        print("[ERROR] Could not connect. Is the C++ engine running?")
-        return
-
+    # Enable TCP_NODELAY and increase buffer
+    s.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+    s.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 1024 * 1024)
     
-    packet_format = '<QIIBB'
-
+    s.connect((HOST, PORT))
+    
     num_orders = 100000
-    start_time = time.time()
-
+    batch_size = 2000
+    buffer = bytearray()
+    
     for i in range(1, num_orders + 1):
-        order_id = i
-        price = random.randint(10000, 10500) 
-        quantity = random.randint(1, 100)
-        side = random.choice([0, 1])        
-        order_type = 0                       
-        binary_data = struct.pack(packet_format, order_id, price, quantity, side, order_type)
+        binary_data = struct.pack(PACKET_FORMAT, i, random.randint(10000, 10500), random.randint(1, 100), random.choice([0, 1]), 0)
+        buffer.extend(binary_data)
         
-        s.sendall(binary_data)
+        if len(buffer) >= batch_size * PACKET_SIZE:
+            s.sendall(buffer)
+            buffer.clear()
+            time.sleep(0.001) # Pacing is crucial for WSL virtual switch
 
-    end_time = time.time()
-    
-    print(f"[BOT] Transmission Complete.")
-    print(f"[BOT] Successfully blasted {num_orders} live orders in {end_time - start_time:.4f} seconds.")
-    
+    if buffer: s.sendall(buffer)
     s.close()
+    print("[BOT] Transmission Complete.")
 
 if __name__ == "__main__":
     main()

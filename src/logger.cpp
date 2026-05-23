@@ -33,12 +33,18 @@ void Logger::log_trade(uint64_t buyer_id, uint64_t seller_id, uint32_t price, ui
     log.timestamp = std::chrono::duration_cast<std::chrono::nanoseconds>(
         std::chrono::system_clock::now().time_since_epoch()).count();
 
-    ring_buffer.push(log);
+    // CRITICAL FIX: Handle the case where the logging ring buffer is full.
+    // Spin-wait using __builtin_ia32_pause() to keep the CPU active but 
+    // prevent the matching engine from dropping logs or crashing.
+    while (!ring_buffer.push(log)) {
+        __builtin_ia32_pause();
+    }
 }
 
 void Logger::process_logs() {
     TradeLog log;
     
+    // 1. Hot path loop: Read and write logs as long as the engine is running
     while (running.load(std::memory_order_acquire)) {
         
         while (ring_buffer.pop(log)) {
@@ -51,9 +57,14 @@ void Logger::process_logs() {
             }
         }
         
-        std::this_thread::yield();
+        // CRITICAL HFT OPTIMIZATION:
+        // Replace std::this_thread::yield() to prevent the OS scheduler from 
+        // putting this thread to sleep for too long, causing a buffer overflow.
+        __builtin_ia32_pause();
     }
 
+    // 2. Flush/Drain path: Ensure remaining trades in the buffer are saved 
+    // to disk during application shutdown.
     while (ring_buffer.pop(log)) {
         if (log_file.is_open()) {
             log_file << log.timestamp << ","

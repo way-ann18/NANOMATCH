@@ -2,12 +2,13 @@
 #include "orderbook.h"
 #include <cstdint>
 #include <string>
+#include "ring_buffer.h"
 
 class TCPServer {
 private:
     int server_fd;
     int port;
-    OrderBook& book;
+    SPSCRingBuffer<Order, 131072>& buffer;
 
     #pragma pack(push, 1)
     struct BinaryOrderPacket {
@@ -20,7 +21,7 @@ private:
     #pragma pack(pop)
 
 public:
-    TCPServer(int listen_port, OrderBook& order_book);
+    TCPServer(int listen_port, SPSCRingBuffer<Order, 131072>& order_buffer);
     ~TCPServer();
 
     void start_listening();

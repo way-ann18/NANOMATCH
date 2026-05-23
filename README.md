@@ -1,282 +1,272 @@
-# NANOMATCH — Ultra-Low Latency Order Matching Engine
+# NANOMATCH -- Ultra-Low Latency Order Matching Engine
 
-> **C++17 · CMake · Google Benchmark · Linux perf · std::atomic**
->
-> A fully functional Limit Order Book (LOB) engineered for sub-microsecond execution latency. Built by stripping away the C++ Standard Library in the critical path and replacing it with cache-aligned contiguous data structures, hardware bit-scan intrinsics, and a lock-free asynchronous logging pipeline.
+> A fully functional C++17 Limit Order Book (LOB) engineered from the ground up for sub-microsecond, deterministic execution. This project bridges the gap between theoretical quantitative finance and hardcore, low-level systems engineering by stripping away high-level abstractions and building cache-aligned, contiguous data structures that mirror the architectural mindset demanded by top-tier proprietary trading firms.
 
 ---
 
 ## Table of Contents
 
-1. [Project Overview](#project-overview)
-2. [Architecture & Design Decisions](#architecture--design-decisions)
-3. [Directory Structure](#directory-structure)
-4. [Build Instructions](#build-instructions)
-5. [Running the Engine](#running-the-engine)
-6. [Google Benchmark — Latency Testing](#google-benchmark--latency-testing)
-7. [Flame Graph Profiling (L1 Cache Misses)](#flame-graph-profiling-l1-cache-misses)
-8. [Performance Results](#performance-results)
-9. [Hardware Environment](#hardware-environment)
+1. [Problem Statement](#problem-statement)
+2. [Project Goals](#project-goals)
+3. [Architecture and Design Decisions](#architecture-and-design-decisions)
+4. [Implementation Evolution](#implementation-evolution)
+5. [Tech Stack](#tech-stack)
+6. [Benchmark Results](#benchmark-results)
+7. [Hardware Specifications](#hardware-specifications)
+8. [Reproducing Benchmark Results](#reproducing-benchmark-results)
+9. [Running the Engine](#running-the-engine)
 
 ---
 
-## Project Overview
+## Problem Statement
 
-Standard algorithmic trading strategies focus purely on alpha generation. In the HFT industry, the most brilliant alpha model is completely useless if the underlying system is a microsecond too slow. The absolute core of any financial exchange is the **Order Matching Engine**.
+Standard algorithmic trading strategies are written in high-level languages, focusing purely on alpha generation and mathematical models. However, in the HFT industry, the most brilliant alpha model is completely useless if the underlying system executing the trade is a microsecond too slow. The absolute core of any financial exchange -- and the primary battleground for quantitative systems engineers -- is the Order Matching Engine.
 
-This project bridges the gap between quantitative finance theory and hardcore low-level systems engineering. It implements a complete, benchmarked, and profiled matching engine that demonstrates the exact architectural mindset demanded by top-tier proprietary trading firms.
-
-**Core capabilities:**
-- Processes Buy/Sell limit orders, market orders, and cancellations on strict price-time priority
-- Replaces STL containers with a custom memory pool and contiguous arrays to eliminate OS overhead and L1/L2 cache misses
-- Parses multi-million-row CSVs using zero-copy `mmap`
-- Integrates a lock-free SPSC ring buffer for asynchronous trade logging without blocking the matching thread
-- Reports throughput, p50 median, p90, and p99 tail latencies via Google Benchmark
+The true challenge of this project is not just implementing the matching logic, but executing that logic with absolute hardware sympathy. Standard C++ practices heavily utilized in competitive programming (like `std::map` or dynamic memory allocations) introduce unpredictable latency spikes due to operating system overhead and CPU cache misses. By stripping away these high-level abstractions to build cache-aligned, contiguous data structures, this engine demonstrates deterministic, sub-microsecond execution.
 
 ---
 
-## Architecture & Design Decisions
+## Project Goals
 
-### 1. Pre-Faulted Memory Pool vs. STL Allocators
-
-The baseline implementation stores orders in `std::vector<Order>` and looks them up via `std::map<uint64_t, Order*>`. This forces the OS to dynamically resize arrays during live trading (`_M_realloc_insert`) and causes the CPU to chase random pointer chains through a Red-Black tree — both resulting in severe L1 cache misses and hundreds of nanoseconds of stall time.
-
-**NANOMATCH's solution (`src/memory_pool.h`):**
-- Pre-allocates **1,000,000 order slots** in a single flat `std::vector<Order>` at startup
-- Manages a free-list stack of available indices — `allocate()` and `deallocate()` are both O(1) pointer arithmetic
-- Orders stored as **intrusive doubly-linked lists** where "pointers" are integer indices into this cache-hot contiguous array, eliminating pointer chasing entirely
-
-### 2. O(1) Hardware Bit-Scan Execution
-
-The baseline uses `std::sort` on a `std::vector` after every insert — O(N log N) per order. When the spread widens, walking the book degrades exponentially.
-
-**NANOMATCH's solution (`src/orderbook.h`, `src/orderbook.cpp`):**
-- Tracks active price levels using **64-bit integer bitboards** (`bid_bitboard`, `ask_bitboard`)
-- Uses compiler intrinsics `__builtin_clzll` (count leading zeros) and `__builtin_ctzll` (count trailing zeros) to interact directly with the CPU's dedicated bit-scan silicon
-- The CPU checks **64 price levels simultaneously in a single clock cycle**, reducing best-bid/best-ask lookup to strict **O(1)**
-
-### 3. Lock-Free Asynchronous Logging
-
-Writing to a file under a `std::mutex` triggers a `__sched_yield` context switch, forcing the OS to pause the matching thread mid-execution.
-
-**NANOMATCH's solution (`src/ring_buffer.h`, `src/logger.h`, `src/logger.cpp`):**
-- Implements an **SPSC (Single-Producer, Single-Consumer) ring buffer** templated on a power-of-2 size (1,048,576 slots)
-- `alignas(64)` on the atomic read/write indices prevents **false sharing** between the producer (matching thread) and consumer (logger thread)
-- Uses `std::memory_order_release` / `std::memory_order_acquire` for correct ordering without a mutex
-- The matching thread pushes a 40-byte `TradeLog` struct and escapes in nanoseconds; a background thread drains the buffer and handles slow file I/O
-
-### 4. Zero-Copy Data Ingestion
-
-`src/csv_reader.cpp` uses Linux `mmap` to map the orders CSV directly into the process address space. A hand-rolled integer parser (`parse_uint`) reads raw bytes without `std::string` allocations or `std::stoi` overhead, eliminating the entire libc parsing stack from the hot path.
+- Build a Core Limit Order Book that processes Buy/Sell limit orders, market orders, and cancellations on strict price-time priority.
+- Implement Cache-Optimized Memory Management by replacing STL containers with custom memory pools and contiguous arrays to eliminate OS overhead and L1/L2 cache misses.
+- Develop a High-Throughput Data Ingestion Pipeline that parses multi-million row CSVs using zero-copy `mmap`.
+- Integrate Lock-Free Concurrency via an asynchronous SPSC ring buffer using atomic operations for trade logging without blocking the main execution thread.
+- Establish a Rigorous Benchmarking Harness using Google Benchmark, reporting throughput, p50, p90, and p99 latencies.
 
 ---
 
-## Directory Structure
+## Architecture and Design Decisions
 
-```
-NANOMATCH/
-│
-├── src/
-│   ├── main.cpp
-│   ├── orderbook.h / .cpp
-│   ├── order.h
-│   ├── memory_pool.h
-│   ├── ring_buffer.h
-│   ├── logger.h / .cpp
-│   ├── csv_reader.h / .cpp
-│   ├── tcp_server.h / .cpp
-│   └── benchmark.cpp
-│
-├── src_baseline/
-│   ├── main.cpp
-│   ├── order.h
-│   └── orderbook.h / .cpp
-│
-├── src_mapBased/
-│   ├── main.cpp
-│   ├── order.h
-│   └── orderbook.h / .cpp
-│
-├── CMakeLists.txt
-├── generate_data.py
-└── trader.py
+### 1. Flat Array Price Ladder Over `std::map`
+
+The most critical architectural decision is the representation of the order book itself.
+
+**The problem with `std::map`:** A `std::map<uint64_t, PriceLevel>` stores its nodes in heap-allocated, non-contiguous memory connected by pointers. Every lookup traverses a red-black tree, causing a chain of pointer dereferences across disparate memory locations. With a market depth of 10,000 price levels, each `add_order` or `cancel_order` call is virtually guaranteed to cause multiple L1/L2 cache misses, each costing 100+ nanoseconds on modern hardware.
+
+**The solution -- a flat array price ladder:** The optimized engine (`src/`) allocates two contiguous `std::vector<PriceLevel>` arrays -- `bids` and `asks` -- with a fixed `MAX_PRICE` capacity (default: 1,000,000). A price `p` maps directly and instantly to `bids[p]` or `asks[p]` with O(1) array indexing, zero pointer indirection, and maximum cache locality. Accessing a price level that was recently touched is nearly guaranteed to be a cache hit.
+
+```cpp
+// Optimized: O(1) direct array access, cache-friendly
+std::vector<PriceLevel> bids; // bids[price] -> PriceLevel
+std::vector<PriceLevel> asks; // asks[price] -> PriceLevel
 ```
 
+### 2. Bitboard-Accelerated Best Bid/Ask Tracking
+
+**The problem:** After a price level is depleted, the engine must find the next best bid (next highest price) or next best ask (next lowest price). Scanning the flat array linearly is O(MAX_PRICE), which is catastrophically slow.
+
+**The solution -- a bitboard:** The engine maintains two `std::vector<uint64_t>` bitboards (`bid_bitboard`, `ask_bitboard`). Each bit at position `p` is `1` if that price level is active and `0` otherwise. Finding the next best price reduces to a single hardware-accelerated bit-scan operation using `__builtin_clzll` (count leading zeros) and `__builtin_ctzll` (count trailing zeros). These compile to a single CPU instruction (`BSR`/`BSF` on x86), making best-price discovery effectively O(1) in hardware.
+
+```cpp
+// Finding the next best ask: a single instruction on the CPU
+best_ask = (block_idx * 64) + __builtin_ctzll(ask_bitboard[block_idx]);
+```
+
+### 3. Custom Memory Pool -- Eliminating `new` and `delete`
+
+**The problem:** Every call to `new` or `malloc` is a system call that goes through the OS memory allocator. This is non-deterministic, can block, causes heap fragmentation, and is the single largest source of latency jitter in high-frequency systems.
+
+**The solution -- a pre-allocated slab allocator:** `MemoryPool` pre-allocates a contiguous block of 1,000,000 `Order` objects on startup in a single `std::vector<Order> pool`. A free list (`std::vector<int32_t> free_list`) tracks available slots by index. `allocate()` and `deallocate()` are simple `pop_back`/`push_back` operations on the free list -- no OS interaction, no fragmentation, and guaranteed sub-nanosecond allocation.
+
+```cpp
+// O(1) allocation -- just a vector pop_back(), no system calls
+int32_t allocate() {
+    int32_t index = free_list.back();
+    free_list.pop_back();
+    return index;
+}
+```
+
+All order nodes are linked using integer indices (int32_t `next_index`, `prev_index`) into this pool rather than raw pointers, making the doubly-linked list at each price level entirely contained within the pool's contiguous memory region.
+
+### 4. Zero-Copy mmap Data Ingestion
+
+**The problem:** Using `std::ifstream` to read a CSV file issues repeated `read()` system calls, copying data from the kernel's page cache into a userspace buffer. For a multi-million row order file, this incurs significant system call overhead and redundant memory copies.
+
+**The solution -- `mmap`:** `CSVReader` uses `mmap(MAP_PRIVATE)` to map the entire file directly into the process's virtual address space. The OS page cache becomes the buffer. The parser (`parse_uint`) then operates directly on the mapped memory using a raw `const char*` cursor, achieving true zero-copy parsing with no intermediate buffers and no system call overhead per record.
+
+### 5. Lock-Free SPSC Ring Buffer
+
+**The problem:** The trade logger cannot write to disk on the critical matching path. Disk I/O is orders of magnitude slower than in-memory operations and would stall the matching engine.
+
+**The solution -- a Single Producer, Single Consumer (SPSC) ring buffer:** `SPSCRingBuffer<T, Size>` is a lock-free queue designed for exactly one producer (the matching engine) and one consumer (the logger background thread). It uses two `alignas(64)` atomic indices (`write_index`, `read_index`) to completely avoid mutexes and condition variables. The `alignas(64)` directive places each index on its own cache line, preventing false sharing -- a subtle but critical optimization where two threads writing to different variables on the same cache line cause constant cache invalidation between CPU cores.
+
+The matching engine calls `ring_buffer.push()` with `memory_order_release` and the logger thread calls `ring_buffer.pop()` with `memory_order_acquire`, establishing the correct happens-before relationship with the minimum possible memory barrier overhead.
+
+The ring buffer size is constrained to be a power of 2 (enforced by `static_assert`), allowing the modulo wrapping to be replaced with a single bitwise AND:
+
+```cpp
+size_t next_write = (current_write + 1) & (Size - 1); // No expensive modulo
+```
+
+### 6. TCP Server with Binary Protocol and `TCP_NODELAY`
+
+For the live trading mode, the `TCPServer` accepts binary order packets over TCP. The packet format uses `#pragma pack(push, 1)` to produce a tightly-packed 18-byte struct with no padding, minimizing wire bytes. `TCP_NODELAY` (disabling Nagle's algorithm) is set on every accepted client socket to prevent the OS from buffering small packets and introducing artificial latency.
+
+### 7. `alignas(64)` on the Order Struct
+
+The `Order` struct in `src/order.h` is annotated with `alignas(64)`, aligning it to a full CPU cache line boundary. This ensures that a single `Order` object never straddles two cache lines, which would require two cache line fetches to read a single order and could cause false sharing between adjacent orders in the pool.
+
 ---
 
-## Build Instructions
+## Implementation Evolution
+
+The project follows a deliberate three-stage evolution to quantify the real-world impact of each optimization.
+
+### Stage 1 -- Baseline (`src_baseline/`)
+
+The simplest correct implementation. Bids and asks are stored as `std::vector<Order>`, kept sorted via `std::sort` after every insertion. Cancellation is a linear O(N) scan with `std::find_if`. This is the standard approach a software generalist might reach for.
+
+- **Add Order:** O(N log N) due to `std::sort`
+- **Cancel Order:** O(N) linear scan
+- **Memory:** Dynamic heap allocations per operation
+
+### Stage 2 -- Map-Based (`src_mapBased/`)
+
+A significant improvement using `std::map<uint64_t, PriceLevel>` (a red-black tree) for O(log N) price level lookup. Each `PriceLevel` holds a `std::list<Order>` for O(1) front-of-queue matching. An `std::unordered_map` provides O(1) average cancellation by mapping `order_id` to a list iterator.
+
+- **Add Order:** O(log N) tree traversal, heap allocations for list nodes
+- **Cancel Order:** O(1) average with hash map, but with heap-pointer indirection and potential hash collisions
+- **Memory:** Non-contiguous, pointer-chased heap nodes -- poor cache locality
+
+### Stage 3 -- Optimized (`src/`)
+
+The production-grade engine. Replaces all dynamic, pointer-based containers with flat arrays, a custom memory pool, a bitboard, and a lock-free logger. Every operation is designed to be cache-resident and branch-predictable.
+
+- **Add Order:** O(1) array index, O(1) pool allocation, O(1) bitboard update
+- **Cancel Order:** O(1) direct `order_map` lookup by `order_id`, O(1) pool deallocation, O(1) bitboard update
+- **Memory:** Fully pre-allocated, contiguous, cache-line aligned
+
+---
+
+## Tech Stack
+
+| Component | Technology |
+|---|---|
+| Language | C++17 |
+| Build System | CMake 3.15+ |
+| Benchmarking | Google Benchmark v1.8.3 |
+| Profiling | Linux `perf`, Intel VTune |
+| Concurrency | `std::atomic`, `std::thread` |
+| I/O | `mmap`, POSIX TCP sockets |
+| Data | Synthetic CSV via Python generator |
+
+---
+
+## Benchmark Results
+
+Note: Logger was disabled in the optimized engine during benchmarking to ensure a fair comparison of the matching engine core against its counterparts.
+
+All timings are in nanoseconds (ns). Each benchmark runs 100 repetitions against a pre-filled book of 10,000 resting orders. Each iteration measures one `add_order` and one `cancel_order` call.
+
+| Implementation | Mean (ns) | Median (ns) | Std Dev (ns) | CV | p50 (ns) | p90 (ns) | p99 (ns) |
+|---|---|---|---|---|---|---|---|
+| Baseline (vector + sort) | | | | | | | |
+| Map-Based (std::map + list) | | | | | | | |
+| Optimized (flat array + bitboard) | | | | | | | |
+
+---
+
+## Hardware Specifications
+
+Benchmarks were run on the following hardware:
+
+```
+Run on (8 X 2112.01 MHz CPUs)
+CPU Caches:
+  L1 Data        32 KiB (x4)
+  L1 Instruction 32 KiB (x4)
+  L2 Unified    256 KiB (x4)
+  L3 Unified   6144 KiB (x1)
+```
+
+The L1 data cache size is particularly relevant to this benchmark. The optimized engine is designed so that the hot path data -- the active price levels near best bid/ask, the bitboard blocks, and the order pool's free list -- fits comfortably within the 32 KiB L1 cache during steady-state operation.
+
+---
+
+## Reproducing Benchmark Results
 
 ### Prerequisites
 
-```bash
-sudo apt update
-sudo apt install -y cmake g++ linux-tools-common linux-tools-generic git python3
-```
+- GCC or Clang with C++17 support
+- CMake 3.15+
+- Git (for Google Benchmark FetchContent)
+- Python 3 (for data generation and the trading bot)
 
-> Google Benchmark is automatically fetched via CMake's `FetchContent` — no manual install needed.
-
-### Compile
+### Step 1 -- Clone and Generate Data
 
 ```bash
-git clone https://github.com/yourusername/NANOMATCH.git
-cd NANOMATCH
-mkdir build && cd build
-cmake .. -DCMAKE_BUILD_TYPE=Release
-cmake --build . -j$(nproc)
-```
-
-This produces two binaries inside `build/`:
-- `NANOMATCH` — the main engine (backtester + live TCP mode)
-- `nanomatch_bench` — the Google Benchmark latency harness
-
----
-
-## Running the Engine
-
-### Backtester Mode (mmap CSV ingestion)
-
-First, generate a synthetic order dataset:
-
-```bash
-# From the project root
+# Generate synthetic order data
 mkdir -p data
-python3 generate_data.py
+python generate_data.py
 ```
 
-Then run the engine against the CSV:
+### Step 2 -- Build
 
 ```bash
-./build/NANOMATCH
+rm -rf build/
+mkdir build
+cmake -B build -S . -DCMAKE_BUILD_TYPE=Release
+cmake --build build --parallel
 ```
 
-### Live Exchange Mode (TCP)
-
-Start the engine in exchange mode:
-
-```bash
-./build/NANOMATCH live
-```
-
-In a separate terminal, launch the Python HFT bot to blast 100,000 binary orders over TCP:
-
-```bash
-python3 trader.py
-```
-
-The engine will process the incoming order stream and print the final order book state on disconnect.
-
----
-
-## Google Benchmark — Latency Testing
-
-The benchmark harness (`src/benchmark.cpp`) pre-fills both the optimized and baseline order books with **5,000 resting bids and 5,000 resting asks**, then measures the raw add/cancel latency over **100 repetitions** with p50, p90, and p99 statistics.
-
-### Run (bare, no CPU pinning)
+### Step 3 -- Run Benchmarks
 
 ```bash
 ./build/nanomatch_bench
 ```
 
-### Run (CPU pinned to Core 7 — recommended)
+The benchmark will run 100 repetitions for each of the three implementations and output the following aggregated statistics for each:
 
-Pinning to a single physical core prevents the Linux scheduler from migrating the thread between cores and wiping the L1 cache mid-benchmark:
-
-```bash
-taskset -c 7 ./build/nanomatch_bench
+```
+<name>_mean | <name>_median | <name>_stddev | <name>_cv | <name>_p50 | <name>_p90 | <name>_p99
 ```
 
-### Run with custom output format
+### Step 4 -- Run the Optimized Engine (CSV Mode)
 
 ```bash
-taskset -c 7 ./build/nanomatch_bench --benchmark_format=json > results.json
+./build/nanomatch
 ```
 
-### Expected output columns
+Reads orders from `data/orders.csv` using zero-copy `mmap`, processes them through the matching engine, and prints the top 5 levels of the order book ladder on completion.
 
-| Column | Description |
-|--------|-------------|
-| `mean` | Average latency across all repetitions |
-| `median` / `p50` | 50th percentile latency |
-| `p90` | 90th percentile tail latency |
-| `p99` | 99th percentile worst-case latency |
-| `stddev` | Standard deviation of latency |
+### Step 5 -- Run the Optimized Engine (Live Mode)
+
+In terminal 1:
+
+```bash
+./build/nanomatch live
+```
+
+In terminal 2 (split):
+
+```bash
+python trader.py
+```
+
+The trading bot connects over TCP on port 8080 and streams 100,000 binary-encoded orders in batched transmissions. The matching engine processes them in real time via the SPSC ring buffer.
+
+### Step 6 -- Run Standalone Implementations (Testing Only)
+
+```bash
+# Baseline implementation
+./build/run_baseline
+
+# Map-based implementation
+./build/run_map
+```
+
+These run the predefined scenario tests for each implementation. No data ingestion pipeline is implemented for these -- they are for correctness verification only.
 
 ---
 
-## Flame Graph Profiling (L1 Cache Misses)
+## Concepts Demonstrated
 
-The flame graphs in the repository visually prove that the baseline STL algorithms dominate L1 cache miss events, while the optimized engine operates almost entirely within the L1 cache.
-
-### Step 1 — Record hardware L1 cache-miss events
-
-```bash
-sudo perf record -e L1-dcache-load-misses -c 10000 -g -- ./build/nanomatch_bench
-```
-
-### Step 2 — Export the raw perf data
-
-The `-f` flag forces perf to read despite WSL2 cross-drive user permission mismatches:
-
-```bash
-sudo perf script -f > out.perf
-```
-
-### Step 3 — Collapse stacks and generate the SVG
-
-Clone Brendan Gregg's FlameGraph scripts if not already present:
-
-```bash
-git clone https://github.com/brendangregg/FlameGraph scripts/FlameGraph
-```
-
-Generate the flame graph colored by memory/cache miss events:
-
-```bash
-./scripts/FlameGraph/stackcollapse-perf.pl out.perf > out.folded
-./scripts/FlameGraph/flamegraph.pl \
-  --title "L1 Cache Misses: Baseline vs O(1) Engine" \
-  --countname "misses" \
-  --colors mem \
-  out.folded > side_by_side.svg
-```
-
-### Step 4 — View the result
-
-On WSL2, open directly in your Windows browser:
-
-```bash
-explorer.exe side_by_side.svg
-```
-
-The baseline STL algorithms (`std::sort`, `_M_realloc_insert`, Red-Black tree traversal) will dominate the visible flame graph space. The NANOMATCH O(1) engine's stack frames will be nearly invisible by comparison — operating well within the L1 cache.
-
----
-
-## Performance Results
-
-Benchmarked with Google Benchmark (100 repetitions, CPU pinned to Core 7):
-
-| Benchmark | mean | median | stddev | cv | p50 | p90 | p99 |
-|---|---|---|---|---|---|---|---|
-| `OrderBookFixture/OptimizedLatency` | 686 ns | 649 ns | 248 ns | 36.08% | 639 ns | 1,021 ns | 1,289 ns |
-| `MapBasedFixture/MapLatency` | 77,118 ns | 67,704 ns | 26,863 ns | 34.83% | 67,673 ns | 116,992 ns | 136,901 ns |
-| `BaselineFixture/BaselineLatency` | 353,555 ns | 344,463 ns | 32,543 ns | 9.20% | 344,388 ns | 387,591 ns | 489,067 ns |
-
-> The optimized engine (bitboard + memory pool) is **515× faster** than the baseline (STL vector + sort) and **112× faster** than the map-based implementation at mean latency.
-
----
-
-## Hardware Environment
-
-| Component | Specification |
-|---|---|
-| **CPU** | 8 Cores @ 2112.01 MHz |
-| **L1 Cache** | 32 KiB Data × 4, 32 KiB Instruction × 4 |
-| **L2 Cache** | 256 KiB Unified × 4 |
-| **L3 Cache** | 6144 KiB Unified × 1 |
-| **OS** | Linux WSL2 on Windows Hypervisor |
-| **Compiler** | GCC with flags `-O3 -march=native` |
-
----
-
-*Built for the quantitative systems engineering track. Architecture decisions validated against NASDAQ TotalView-ITCH specifications.*
+- Cache locality -- L1/L2/L3 vs RAM hierarchy
+- Custom memory pools and arenas
+- Lock-free concurrency and memory ordering
+- Zero-copy I/O via `mmap`
+- Struct packing and false sharing prevention
+- Branch misprediction and pipeline hazards
+- Bitwise operations for hardware-accelerated search

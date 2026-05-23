@@ -38,8 +38,22 @@ target_include_directories(baseline_lib PUBLIC src_baseline)
 add_library(map_lib STATIC src_mapBased/orderbook.cpp)
 target_include_directories(map_lib PUBLIC src_mapBased)
 
-add_executable(nanomatch_bench src/benchmark.cpp src/orderbook.cpp src/logger.cpp)
+add_executable(nanomatch_bench benchmark.cpp src/orderbook.cpp src/logger.cpp)
 target_include_directories(nanomatch_bench PRIVATE src)
 
+# Add these to CMakeLists.txt if you want separate runnables
+add_executable(RUN_BASELINE src_baseline/main.cpp src_baseline/orderbook.cpp)
+target_link_libraries(RUN_BASELINE PRIVATE baseline_lib Threads::Threads)
+
+add_executable(RUN_MAP src_mapBased/main.cpp src_mapBased/orderbook.cpp)
+target_link_libraries(RUN_MAP PRIVATE map_lib Threads::Threads)
+# --- 3. NEW: V1 Library ---
+
 # --- 3. Link all 3 libraries to the benchmark executable ---
-target_link_libraries(nanomatch_bench PRIVATE baseline_lib map_lib benchmark::benchmark Threads::Threads)
+target_link_libraries(nanomatch_bench 
+    PRIVATE 
+        baseline_lib 
+        map_lib 
+        benchmark::benchmark 
+        Threads::Threads
+)
